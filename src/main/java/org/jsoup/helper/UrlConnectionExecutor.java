@@ -90,8 +90,14 @@ class UrlConnectionExecutor extends RequestExecutor {
         conn.setConnectTimeout(req.timeout());
         conn.setReadTimeout(req.timeout() / 2); // gets reduced after connection is made and status is read
 
-        if (req.sslSocketFactory() != null && conn instanceof HttpsURLConnection)
-            ((HttpsURLConnection) conn).setSSLSocketFactory(req.sslSocketFactory());
+        if (conn instanceof HttpsURLConnection) {
+            HttpsURLConnection httpsConnection = (HttpsURLConnection) conn;
+
+            if (req.sslSocketFactory() != null)
+                httpsConnection.setSSLSocketFactory(req.sslSocketFactory());
+            if (req.hostnameVerifier() != null)
+                httpsConnection.setHostnameVerifier(req.hostnameVerifier());
+        }
         if (req.authenticator != null)
             AuthenticationHandler.handler.enable(req.authenticator, conn); // removed in finally
         if (req.method().hasBody())

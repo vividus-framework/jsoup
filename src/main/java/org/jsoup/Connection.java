@@ -6,6 +6,7 @@ import org.jsoup.parser.Parser;
 import org.jsoup.parser.StreamParser;
 import org.jspecify.annotations.Nullable;
 
+import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.SSLSocketFactory;
 import java.io.BufferedInputStream;
 import java.io.IOException;
@@ -215,6 +216,13 @@ public interface Connection {
      * @return this Connection, for chaining
      */
     Connection sslSocketFactory(SSLSocketFactory sslSocketFactory);
+
+    /**
+     * Set a custom hostname verifier to verify the hostname during handshake
+     * @param hostnameVerifier hostname verifier
+     * @return this Connection, for chaining
+     */
+    Connection hostnameVerifier(HostnameVerifier hostnameVerifier);
 
     /**
      * Add a request data parameter. Request parameters are sent in the request query string for GETs, and in the
@@ -773,6 +781,18 @@ public interface Connection {
          * @param sslSocketFactory SSL socket factory
          */
         void sslSocketFactory(SSLSocketFactory sslSocketFactory);
+
+        /**
+         * Get the current hostname verifier, if any.
+         * @return hostname verifier if set, null otherwise
+         */
+        @Nullable HostnameVerifier hostnameVerifier();
+
+        /**
+         * Set a custom hostname verifier to verify the hostname during handshake
+         * @param hostnameVerifier hostname verifier
+         */
+        void hostnameVerifier(HostnameVerifier hostnameVerifier);
 
         /**
          * Add a data parameter to the request
