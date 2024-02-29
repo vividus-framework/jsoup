@@ -6,6 +6,7 @@ import org.jsoup.parser.Parser;
 import org.jsoup.parser.StreamParser;
 import org.jspecify.annotations.Nullable;
 
+import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSocketFactory;
 import java.io.BufferedInputStream;
@@ -222,6 +223,13 @@ public interface Connection {
      */
     @Deprecated
     Connection sslSocketFactory(SSLSocketFactory sslSocketFactory);
+
+    /**
+     * Set a custom hostname verifier to verify the hostname during handshake
+     * @param hostnameVerifier hostname verifier
+     * @return this Connection, for chaining
+     */
+    Connection hostnameVerifier(HostnameVerifier hostnameVerifier);
 
     /**
      Set a custom SSL context for HTTPS connections.
@@ -799,6 +807,18 @@ public interface Connection {
          */
         @Deprecated
         void sslSocketFactory(SSLSocketFactory sslSocketFactory);
+
+        /**
+         * Get the current hostname verifier, if any.
+         * @return hostname verifier if set, null otherwise
+         */
+        @Nullable HostnameVerifier hostnameVerifier();
+
+        /**
+         * Set a custom hostname verifier to verify the hostname during handshake
+         * @param hostnameVerifier hostname verifier
+         */
+        void hostnameVerifier(HostnameVerifier hostnameVerifier);
 
         /**
          Get the current custom SSL context, if any.

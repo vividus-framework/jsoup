@@ -95,6 +95,8 @@ class UrlConnectionExecutor extends RequestExecutor {
                 scon.setSSLSocketFactory(req.sslContext.getSocketFactory());
             else if (req.sslSocketFactory() != null)
                 scon.setSSLSocketFactory(req.sslSocketFactory());
+            if (req.hostnameVerifier() != null)
+                scon.setHostnameVerifier(req.hostnameVerifier());
         }
         if (req.authenticator != null)
             AuthenticationHandler.handler.enable(req.authenticator, conn); // removed in finally

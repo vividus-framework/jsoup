@@ -11,6 +11,7 @@ import org.jsoup.parser.Parser;
 import org.jsoup.parser.StreamParser;
 import org.jspecify.annotations.Nullable;
 
+import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSocketFactory;
 import java.io.BufferedInputStream;
@@ -222,6 +223,12 @@ public class HttpConnection implements Connection {
     public Connection sslSocketFactory(SSLSocketFactory sslSocketFactory) {
 	    req.sslSocketFactory(sslSocketFactory);
 	    return this;
+    }
+
+    @Override
+    public Connection hostnameVerifier(HostnameVerifier hostnameVerifier) {
+        req.hostnameVerifier(hostnameVerifier);
+        return this;
     }
 
     @Override
@@ -631,6 +638,7 @@ public class HttpConnection implements Connection {
         private @Nullable Progress<Connection.Response> responseProgress;
 
         private final ReentrantLock executing = new ReentrantLock(); // detects and warns if same request used concurrently
+        private @Nullable HostnameVerifier hostnameVerifier;
 
         Request() {
             super();
@@ -731,6 +739,14 @@ public class HttpConnection implements Connection {
         @Override
         public void sslSocketFactory(SSLSocketFactory sslSocketFactory) {
             this.sslSocketFactory = sslSocketFactory;
+        }
+
+        public HostnameVerifier hostnameVerifier() {
+            return hostnameVerifier;
+        }
+
+        public void hostnameVerifier(HostnameVerifier hostnameVerifier) {
+            this.hostnameVerifier = hostnameVerifier;
         }
 
         @Override @Nullable
