@@ -15,6 +15,7 @@ import org.jsoup.parser.StreamParser;
 import org.jsoup.parser.TokenQueue;
 import org.jspecify.annotations.Nullable;
 
+import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLSocketFactory;
 import java.io.BufferedInputStream;
@@ -220,6 +221,12 @@ public class HttpConnection implements Connection {
     public Connection sslSocketFactory(SSLSocketFactory sslSocketFactory) {
 	    req.sslSocketFactory(sslSocketFactory);
 	    return this;
+    }
+
+    @Override
+    public Connection hostnameVerifier(HostnameVerifier hostnameVerifier) {
+        req.hostnameVerifier(hostnameVerifier);
+        return this;
     }
 
     @Override
@@ -615,6 +622,7 @@ public class HttpConnection implements Connection {
         private @Nullable Progress<Connection.Response> responseProgress;
 
         private volatile boolean executing = false;
+        private @Nullable HostnameVerifier hostnameVerifier;
 
         Request() {
             super();
@@ -714,6 +722,14 @@ public class HttpConnection implements Connection {
         @Override
         public void sslSocketFactory(SSLSocketFactory sslSocketFactory) {
             this.sslSocketFactory = sslSocketFactory;
+        }
+
+        public HostnameVerifier hostnameVerifier() {
+            return hostnameVerifier;
+        }
+
+        public void hostnameVerifier(HostnameVerifier hostnameVerifier) {
+            this.hostnameVerifier = hostnameVerifier;
         }
 
         @Override
@@ -1073,8 +1089,14 @@ public class HttpConnection implements Connection {
             conn.setConnectTimeout(req.timeout());
             conn.setReadTimeout(req.timeout() / 2); // gets reduced after connection is made and status is read
 
-            if (req.sslSocketFactory() != null && conn instanceof HttpsURLConnection)
-                ((HttpsURLConnection) conn).setSSLSocketFactory(req.sslSocketFactory());
+            if (conn instanceof HttpsURLConnection) {
+                HttpsURLConnection httpsConnection = (HttpsURLConnection) conn;
+
+                if (req.sslSocketFactory() != null)
+                    httpsConnection.setSSLSocketFactory(req.sslSocketFactory());
+                if (req.hostnameVerifier() != null)
+                    httpsConnection.setHostnameVerifier(req.hostnameVerifier());
+            }
             if (req.authenticator != null)
                 AuthenticationHandler.handler.enable(req.authenticator, conn); // removed in finally
             if (req.method().hasBody())
