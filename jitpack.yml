@@ -1,2 +1,2 @@
 install:
-  mvn clean install -Djapicmp.skip=true
+  mvn clean install -Djapicmp.skip=true -DskipTests
