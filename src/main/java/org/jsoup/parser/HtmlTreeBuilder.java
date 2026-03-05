@@ -36,7 +36,7 @@ public class HtmlTreeBuilder extends TreeBuilder {
         "annotation-xml",  "mi", "mn", "mo", "ms", "mtext"
     };
     static final String[]TagSearchInScopeSvg = new String[] {
-        "desc", "foreignObject", "title"
+        "desc", "foreignobject", "title" // note normalized to lowercase to match other scope searches; will preserve input case as appropriate
     };
 
     static final String[] TagSearchList = new String[]{"ol", "ul"};
@@ -60,7 +60,9 @@ public class HtmlTreeBuilder extends TreeBuilder {
         "button", "fieldset", "input", "keygen", "object", "output", "select", "textarea"
     };
 
-    public static final int MaxScopeSearchDepth = 100; // prevents the parser bogging down in exceptionally broken pages
+    /** @deprecated Not used anymore; configure parser depth via {@link Parser#setMaxDepth(int)}. Will be removed in jsoup 1.24.1. */
+    @Deprecated
+    public static final int MaxScopeSearchDepth = 100;
 
     private HtmlTreeBuilderState state; // the current state
     private HtmlTreeBuilderState originalState; // original / marked state
@@ -306,9 +308,9 @@ public class HtmlTreeBuilder extends TreeBuilder {
     Element createElementFor(Token.StartTag startTag, String namespace, boolean forcePreserveCase) {
         // dedupe and normalize the attributes:
         Attributes attributes = startTag.attributes;
-        if (!forcePreserveCase)
-            attributes = settings.normalizeAttributes(attributes);
         if (attributes != null && !attributes.isEmpty()) {
+            if (!forcePreserveCase)
+                settings.normalizeAttributes(attributes);
             int dupes = attributes.deduplicate(settings);
             if (dupes > 0) {
                 error("Dropped duplicate attribute(s) in tag [%s]", startTag.normalName);
@@ -332,7 +334,9 @@ public class HtmlTreeBuilder extends TreeBuilder {
         if (startTag.isSelfClosing()) {
             Tag tag = el.tag();
             tag.setSeenSelfClose(); // can infer output if in xml syntax
-            if (tag.isKnownTag() && (tag.isEmpty() || tag.isSelfClosing())) {
+            if (tag.isEmpty()) {
+                // treated as empty below; nothing further
+            } else if (tag.isKnownTag() && tag.isSelfClosing()) {
                 // ok, allow it. effectively a pop, but fiddles with the state. handles empty style, title etc which would otherwise leave us in data state
                 tokeniser.transition(TokeniserState.Data); // handles <script />, otherwise needs breakout steps from script data
                 tokeniser.emit(emptyEnd.reset().name(el.tagName()));  // ensure we get out of whatever state we are in. emitted for yielded processing
@@ -340,6 +344,10 @@ public class HtmlTreeBuilder extends TreeBuilder {
                 // error it, and leave the inserted element on
                 tokeniser.error("Tag [%s] cannot be self-closing; not a void tag", tag.normalName());
             }
+        }
+
+        if (el.tag().isEmpty()) {
+            pop(); // custom void tags behave like built-in voids (no children, not left on the stack); known empty go via insertEmpty
         }
 
         return el;
@@ -386,6 +394,8 @@ public class HtmlTreeBuilder extends TreeBuilder {
      * @param el the Element to insert and make the current element
      */
     private void doInsertElement(Element el) {
+        enforceStackDepthLimit();
+
         if (formElement != null && el.tag().namespace.equals(NamespaceHtml) && StringUtil.inSorted(el.normalName(), TagFormListed))
             formElement.addElement(el); // connect form controls to their form element
 
@@ -407,8 +417,20 @@ public class HtmlTreeBuilder extends TreeBuilder {
         onNodeInserted(node);
     }
 
-    /** Inserts the provided character token into the current element. */
+    /** Inserts the provided character token into the current element. Any nulls in the data will be removed. */
     void insertCharacterNode(Token.Character characterToken) {
+        insertCharacterNode(characterToken, false);
+    }
+
+    /**
+     Inserts the provided character token into the current element. The tokenizer will have already raised precise character errors.
+
+     @param characterToken the character token to insert
+     @param replace if true, replaces any null chars in the data with the replacement char (U+FFFD). If false, removes
+     null chars.
+     */
+    void insertCharacterNode(Token.Character characterToken, boolean replace) {
+        characterToken.normalizeNulls(replace);
         Element el = currentElement(); // will be doc if no current element; allows for whitespace to be inserted into the doc root object (not on the stack)
         insertCharacterToElement(characterToken, el);
     }
@@ -480,6 +502,20 @@ public class HtmlTreeBuilder extends TreeBuilder {
         return false;
     }
 
+    @Override
+    void onStackPrunedForDepth(Element element) {
+        // handle other effects of popping to keep state correct
+        if (element == headElement) headElement = null;
+        if (element == formElement) setFormElement(null);
+        removeFromActiveFormattingElements(element);
+        if (element.nameIs("template")) {
+            clearFormattingElementsToLastMarker();
+            if (templateModeSize() > 0)
+                popTemplateMode();
+            resetInsertionMode();
+        }
+    }
+
     /** Pops the stack until the given HTML element is removed. */
     @Nullable
     Element popStackToClose(String elName) {
@@ -546,8 +582,8 @@ public class HtmlTreeBuilder extends TreeBuilder {
      @return the Element immediately above the supplied element, or null if there is no such element.
      */
     @Nullable Element aboveOnStack(Element el) {
-        assert onStack(el);
-        for (int pos = stack.size() -1; pos >= 0; pos--) {
+        if (!onStack(el)) return null;
+        for (int pos = stack.size() -1; pos > 0; pos--) {
             Element next = stack.get(pos);
             if (next == el) {
                 return stack.get(pos-1);
@@ -558,8 +594,13 @@ public class HtmlTreeBuilder extends TreeBuilder {
 
     void insertOnStackAfter(Element after, Element in) {
         int i = stack.lastIndexOf(after);
-        Validate.isTrue(i != -1);
-        stack.add(i+1, in);
+        if (i == -1) {
+            error("Did not find element on stack to insert after");
+            stack.add(in);
+            // may happen on particularly malformed inputs during adoption
+        } else {
+            stack.add(i+1, in);
+        }
     }
 
     void replaceOnStack(Element out, Element in) {
@@ -676,9 +717,8 @@ public class HtmlTreeBuilder extends TreeBuilder {
     private boolean inSpecificScope(String[] targetNames, String[] baseTypes, @Nullable String[] extraTypes) {
         // https://html.spec.whatwg.org/multipage/parsing.html#has-an-element-in-the-specific-scope
         final int bottom = stack.size() -1;
-        final int top = bottom > MaxScopeSearchDepth ? bottom - MaxScopeSearchDepth : 0;
         // don't walk too far up the tree
-        for (int pos = bottom; pos >= top; pos--) {
+        for (int pos = bottom; pos >= 0; pos--) {
             Element el = stack.get(pos);
             String elName = el.normalName();
             // namespace checks - arguments provided are always in html ns, with this bolt-on for math and svg:
@@ -734,17 +774,12 @@ public class HtmlTreeBuilder extends TreeBuilder {
             if (!inSorted(elName, TagSearchSelectScope)) // all elements except
                 return false;
         }
-        Validate.fail("Should not be reachable");
-        return false;
+        return false; // nothing left on stack
     }
 
     /** Tests if there is some element on the stack that is not in the provided set. */
     boolean onStackNot(String[] allowedTags) {
-        final int bottom = stack.size() -1;
-        final int top = bottom > MaxScopeSearchDepth ? bottom - MaxScopeSearchDepth : 0;
-        // don't walk too far up the tree
-
-        for (int pos = bottom; pos >= top; pos--) {
+        for (int pos = stack.size() - 1; pos >= 0; pos--) {
             final String elName = stack.get(pos).normalName();
             if (!inSorted(elName, allowedTags))
                 return true;

@@ -10,10 +10,12 @@ import org.jsoup.nodes.Node;
 import org.jsoup.nodes.TextNode;
 import org.jsoup.parser.Parser;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
-import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 import static org.jsoup.select.EvaluatorDebug.sexpr;
@@ -896,14 +898,12 @@ public class SelectorTest {
         Document doc = Jsoup.parse(html);
 
         Elements found = doc.select("div[class=value ]");
-        assertEquals(2, found.size());
-        assertEquals("class without space", found.get(0).text());
-        assertEquals("class with space", found.get(1).text());
+        assertEquals(1, found.size());
+        assertEquals("class with space", found.get(0).text());
 
         found = doc.select("div[class=\"value \"]");
-        assertEquals(2, found.size());
-        assertEquals("class without space", found.get(0).text());
-        assertEquals("class with space", found.get(1).text());
+        assertEquals(1, found.size());
+        assertEquals("class with space", found.get(0).text());
 
         found = doc.select("div[class=\"value\\ \"]");
         assertEquals(0, found.size());
@@ -1194,7 +1194,7 @@ public class SelectorTest {
         Evaluator eval = QueryParser.parse("p ~ p");
         CombiningEvaluator.And andEval = (CombiningEvaluator.And) eval;
         StructuralEvaluator.PreviousSibling prevEval = (StructuralEvaluator.PreviousSibling) andEval.evaluators.get(0);
-        IdentityHashMap<Node, IdentityHashMap<Node, Boolean>> map = prevEval.threadMemo.get();
+        Map<Node, Map<Node, Boolean>> map = prevEval.threadMemo.get();
         assertEquals(0, map.size()); // no memo yet
 
         Document doc1 = Jsoup.parse("<p>One<p>Two<p>Three");
@@ -1207,7 +1207,7 @@ public class SelectorTest {
         assertEquals(2, s2.size());
         assertEquals("Two2", s2.first().text());
 
-        assertEquals(1, map.size()); // root of doc 2
+        assertEquals(0, map.size()); // reset after collect
     }
 
     @Test public void blankTextNodesAreConsideredEmpty() {
@@ -1727,6 +1727,70 @@ public class SelectorTest {
             "Could not parse query '::unknown:contains(foo)': unknown node type '::unknown'",
             ex.getMessage()
         );
+    }
+
+    @Test void attributeSelectorQuotedWhitespace() {
+        // https://github.com/jhy/jsoup/issues/2380
+        Document doc = Jsoup.parse(
+            "<div id=1 data=foobar></div>" +
+                "<div id=2 data=' foobar '></div>" +
+                "<div id=3 data='xfoobarx'></div>"
+        );
+
+        // match: literal compare (no trimming)
+        assertSelectedIds(doc.select("div[data=\"foobar\"]"), "1");
+        assertSelectedIds(doc.select("div[data=\" foobar \"]"), "2");
+
+        // prefix
+        assertSelectedIds(doc.select("div[data^=\"foo\"]"), "1");
+        assertSelectedIds(doc.select("div[data^=\" foo\"]"), "2");
+
+        // suffix
+        assertSelectedIds(doc.select("div[data$=\"bar\"]"), "1");
+        assertSelectedIds(doc.select("div[data$=\"bar \"]"), "2");
+
+        // contains
+        assertSelectedIds(doc.select("div[data*=\"foobar\"]"), "1", "2", "3");
+        assertSelectedIds(doc.select("div[data*=\" foobar \"]"), "2");
+    }
+
+    @Test void canSelectBlankAttribute() {
+        Document doc = Jsoup.parse(
+            "<div id=1 data=''></div>" +
+                "<div id=2 data></div>" +
+                "<div id=3 data=one></div>"
+        );
+
+        assertSelectedIds(doc.select("div[data]"), "1", "2", "3");
+        assertSelectedIds(doc.select("div[data='']"), "1", "2");
+        assertSelectedIds(doc.select("div[data=]"), "1", "2");
+
+        assertSelectedIds(doc.select("div[data^='']"), "1", "2", "3");
+        assertSelectedIds(doc.select("div[data$='']"), "1", "2", "3");
+        assertSelectedIds(doc.select("div[data*='']"), "1", "2", "3");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"[abs:!=]", "[ abs:^=]"})
+    void parseExceptionOnEmptyAbsKey(String query) {
+        Selector.SelectorParseException ex = assertThrows(
+            Selector.SelectorParseException.class,
+            () -> Selector.evaluatorOf(query)
+        );
+        assertEquals("Absolute attribute key must have a name", ex.getMessage());
+    }
+
+    @Test void parseExceptionOnEmptyKeyVal() {
+        // was previously firing at match time, not eval time
+        String q = "[\"=\"]";
+        boolean threw = false;
+        try {
+            Evaluator e = Selector.evaluatorOf(q);
+        } catch (Selector.SelectorParseException ex) {
+            threw = true;
+            assertEquals("Quoted value must have content", ex.getMessage());
+        }
+        assertTrue(threw);
     }
 
 }

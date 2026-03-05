@@ -11,10 +11,10 @@ import org.jsoup.nodes.PseudoTextElement;
 import org.jsoup.nodes.TextNode;
 import org.jsoup.nodes.XmlDeclaration;
 import org.jsoup.parser.ParseSettings;
+import org.jsoup.helper.Regex;
 
 import java.util.List;
 import java.util.function.Predicate;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import static org.jsoup.internal.Normalizer.lowerCase;
@@ -272,7 +272,7 @@ public abstract class Evaluator {
 
         @Override
         public boolean matches(Element root, Element element) {
-            return element.hasAttr(key) && value.equalsIgnoreCase(element.attr(key).trim());
+            return element.hasAttr(key) && value.equalsIgnoreCase(element.attr(key));
         }
 
         @Override protected int cost() {
@@ -315,7 +315,7 @@ public abstract class Evaluator {
      */
     public static final class AttributeWithValueStarting extends AttributeKeyPair {
         public AttributeWithValueStarting(String key, String value) {
-            super(key, value, false);
+            super(key, value);
         }
 
         @Override
@@ -338,7 +338,7 @@ public abstract class Evaluator {
      */
     public static final class AttributeWithValueEnding extends AttributeKeyPair {
         public AttributeWithValueEnding(String key, String value) {
-            super(key, value, false);
+            super(key, value);
         }
 
         @Override
@@ -385,11 +385,15 @@ public abstract class Evaluator {
      */
     public static final class AttributeWithValueMatching extends Evaluator {
         final String key;
-        final Pattern pattern;
+        final Regex pattern;
 
-        public AttributeWithValueMatching(String key, Pattern pattern) {
+        public AttributeWithValueMatching(String key, Regex pattern) {
             this.key = normalize(key);
             this.pattern = pattern;
+        }
+
+        public AttributeWithValueMatching(String key, Pattern pattern) {
+            this(key, Regex.fromPattern(pattern)); // api compat
         }
 
         @Override
@@ -416,26 +420,30 @@ public abstract class Evaluator {
         final String value;
 
         public AttributeKeyPair(String key, String value) {
-            this(key, value, true);
-        }
-
-        public AttributeKeyPair(String key, String value, boolean trimQuoted) {
             Validate.notEmpty(key);
-            Validate.notEmpty(value);
+            Validate.notNull(value);
 
             this.key = normalize(key);
             boolean quoted = value.startsWith("'") && value.endsWith("'")
                 || value.startsWith("\"") && value.endsWith("\"");
-            if (quoted)
+            if (quoted) {
+                Validate.isTrue(value.length() > 1, "Quoted value must have content");
                 value = value.substring(1, value.length() - 1);
+            }
 
-            // normalize value based on whether it was quoted and trimQuoted flag
-            // keeps whitespace for attribute val starting or ending, when quoted
-            if (trimQuoted || !quoted)
-                this.value = normalize(value); // lowercase and trims
-            else
-                this.value = lowerCase(value); // only lowercase
+            this.value = lowerCase(value); // case-insensitive match
         }
+
+        /**
+         @deprecated since 1.22.1, use {@link #AttributeKeyPair(String, String)}; the previous trimQuoted parameter is no longer used.
+         This constructor will be removed in jsoup 1.24.1.
+         */
+        @Deprecated
+        public AttributeKeyPair(String key, String value, boolean ignored) {
+            this(key, value);
+        }
+
+
     }
 
     /**
@@ -922,16 +930,19 @@ public abstract class Evaluator {
      * Evaluator for matching Element (and its descendants) text with regex
      */
     public static final class Matches extends Evaluator {
-        private final Pattern pattern;
+        private final Regex pattern;
+
+        public Matches(Regex pattern) {
+            this.pattern = pattern;
+        }
 
         public Matches(Pattern pattern) {
-            this.pattern = pattern;
+            this(Regex.fromPattern(pattern));
         }
 
         @Override
         public boolean matches(Element root, Element element) {
-            Matcher m = pattern.matcher(element.text());
-            return m.find();
+            return pattern.matcher(element.text()).find();
         }
 
         @Override protected int cost() {
@@ -948,16 +959,19 @@ public abstract class Evaluator {
      * Evaluator for matching Element's own text with regex
      */
     public static final class MatchesOwn extends Evaluator {
-        private final Pattern pattern;
+        private final Regex pattern;
+
+        public MatchesOwn(Regex pattern) {
+            this.pattern = pattern;
+        }
 
         public MatchesOwn(Pattern pattern) {
-            this.pattern = pattern;
+            this(Regex.fromPattern(pattern));
         }
 
         @Override
         public boolean matches(Element root, Element element) {
-            Matcher m = pattern.matcher(element.ownText());
-            return m.find();
+            return pattern.matcher(element.ownText()).find();
         }
 
         @Override protected int cost() {
@@ -975,16 +989,19 @@ public abstract class Evaluator {
      * @since 1.15.1.
      */
     public static final class MatchesWholeText extends Evaluator {
-        private final Pattern pattern;
+        private final Regex pattern;
+
+        public MatchesWholeText(Regex pattern) {
+            this.pattern = pattern;
+        }
 
         public MatchesWholeText(Pattern pattern) {
-            this.pattern = pattern;
+            this.pattern = Regex.fromPattern(pattern);
         }
 
         @Override
         public boolean matches(Element root, Element element) {
-            Matcher m = pattern.matcher(element.wholeText());
-            return m.find();
+            return pattern.matcher(element.wholeText()).find();
         }
 
         @Override protected int cost() {
@@ -1002,15 +1019,19 @@ public abstract class Evaluator {
      * @since 1.15.1.
      */
     public static final class MatchesWholeOwnText extends Evaluator {
-        private final Pattern pattern;
+        private final Regex pattern;
+
+        public MatchesWholeOwnText(Regex pattern) {
+            this.pattern = pattern;
+        }
 
         public MatchesWholeOwnText(Pattern pattern) {
-            this.pattern = pattern;
+            this(Regex.fromPattern(pattern));
         }
 
         @Override
         public boolean matches(Element root, Element element) {
-            Matcher m = pattern.matcher(element.wholeOwnText());
+            Regex.Matcher m = pattern.matcher(element.wholeOwnText());
             return m.find();
         }
 
@@ -1025,7 +1046,7 @@ public abstract class Evaluator {
     }
 
     /**
-     @deprecated This selector is deprecated and will be removed in a future version. Migrate to <code>::textnode</code> using the <code>Element#selectNodes()</code> method instead.
+     @deprecated This selector is deprecated and will be removed in jsoup 1.24.1. Migrate to <code>::textnode</code> using the <code>Element#selectNodes()</code> method instead.
      */
     @Deprecated
     public static final class MatchText extends Evaluator {
@@ -1035,7 +1056,7 @@ public abstract class Evaluator {
             // log a deprecated error on first use; users typically won't directly construct this Evaluator and so won't otherwise get deprecation warnings
             if (!loggedError) {
                 loggedError = true;
-                System.err.println("WARNING: :matchText selector is deprecated and will be removed in a future version. Use Element#selectNodes(String, Class) with selector ::textnode and class TextNode instead.");
+                System.err.println("WARNING: :matchText selector is deprecated and will be removed in jsoup 1.24.1. Use Element#selectNodes(String, Class) with selector ::textnode and class TextNode instead.");
             }
         }
 

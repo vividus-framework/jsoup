@@ -2,6 +2,7 @@ package org.jsoup.integration;
 
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
 import org.jsoup.parser.Parser;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -47,10 +48,24 @@ public class FuzzFixesTest {
         assertNotNull(xmlDoc);
     }
 
+    @Test void fragment() {
+        Parser.htmlParser().parseFragmentInput("<frameset>>l\u0000<\u0000<ditl>\u0000< \\", new Element("colgroup"), "");
+    }
+
     @ParameterizedTest
     @MethodSource("testFiles")
     void testHtmlParse(File file) throws IOException {
         Document doc = Jsoup.parse(file, "UTF-8", "https://example.com/");
+        assertNotNull(doc);
+        doc = Jsoup.parse(file, "UTF-8", ""); // no base href attr; so same as a parse(string), which can have subtly different semantics
+        assertNotNull(doc);
+    }
+
+    @ParameterizedTest
+    @MethodSource("testFiles")
+    void testHtmlFragmentParse(File file) throws IOException {
+        String html = ParseTest.getFileAsString(file);
+        Document doc = Jsoup.parseBodyFragment(html);
         assertNotNull(doc);
     }
 
@@ -59,5 +74,6 @@ public class FuzzFixesTest {
     void testXmlParse(File file) throws IOException {
         Document doc = Jsoup.parse(file, "UTF-8", "https://example.com/", Parser.xmlParser());
         assertNotNull(doc);
+        doc = Jsoup.parse(file, "UTF-8", "", Parser.xmlParser()); // no base href attr
     }
 }

@@ -31,8 +31,9 @@ public class Collector {
         Stream<Element> stream = eval.wantsNodes() ?
             streamNodes(eval, root, Element.class) :
             stream(eval, root);
-
-        return stream.collect(toCollection(Elements::new));
+        Elements els = stream.collect(toCollection(Elements::new));
+        eval.reset(); // drops any held memos
+        return els;
     }
 
     /**
@@ -72,7 +73,9 @@ public class Collector {
      @return the first match; {@code null} if none
      */
     public static @Nullable Element findFirst(Evaluator eval, Element root) {
-        return stream(eval, root).findFirst().orElse(null);
+        Element el = stream(eval, root).findFirst().orElse(null);
+        eval.reset();
+        return el;
     }
 
     /**
@@ -86,7 +89,9 @@ public class Collector {
      @since 1.21.1
      */
     public static <T extends Node> @Nullable T findFirstNode(Evaluator eval, Element root, Class<T> type) {
-        return streamNodes(eval, root, type).findFirst().orElse(null);
+        T node = streamNodes(eval, root, type).findFirst().orElse(null);
+        eval.reset();
+        return node;
     }
 
     /**

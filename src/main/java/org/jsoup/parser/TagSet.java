@@ -25,22 +25,48 @@ public class TagSet {
     static final TagSet HtmlTagSet = initHtmlDefault();
 
     private final Map<String, Map<String, Tag>> tags = new HashMap<>(); // namespace -> tag name -> Tag
-    private final @Nullable TagSet source; // source to pull tags from on demand
+    private final @Nullable TagSet source; // internal fallback for lazy tag copies
     private @Nullable ArrayList<Consumer<Tag>> customizers; // optional onNewTag tag customizer
 
     /**
      Returns a mutable copy of the default HTML tag set.
      */
     public static TagSet Html() {
-        return new TagSet(HtmlTagSet);
+        return new TagSet(HtmlTagSet, null);
+    }
+
+    private TagSet(@Nullable TagSet source, @Nullable ArrayList<Consumer<Tag>> customizers) {
+        this.source = source;
+        this.customizers = customizers;
     }
 
     public TagSet() {
-        source = null;
+        this(null, null);
     }
 
-    public TagSet(TagSet original) {
-        this.source = original;
+    /**
+     Creates a new TagSet by copying the current tags and customizers from the provided source TagSet. Changes made to
+     one TagSet will not affect the other.
+     @param template the TagSet to copy
+     */
+    public TagSet(TagSet template) {
+        this(template.source, copyCustomizers(template));
+        // copy tags eagerly; any lazy pull-through should come only from the root source (which would be the HTML defaults), not the template itself.
+        // that way the template tagset is not mutated when we do read through
+        if (template.tags.isEmpty()) return;
+
+        for (Map.Entry<String, Map<String, Tag>> namespaceEntry : template.tags.entrySet()) {
+            Map<String, Tag> nsTags = new HashMap<>(namespaceEntry.getValue().size());
+            for (Map.Entry<String, Tag> tagEntry : namespaceEntry.getValue().entrySet()) {
+                nsTags.put(tagEntry.getKey(), tagEntry.getValue().clone());
+            }
+            tags.put(namespaceEntry.getKey(), nsTags);
+        }
+    }
+
+    private static @Nullable ArrayList<Consumer<Tag>> copyCustomizers(TagSet base) {
+        if (base.customizers == null) return null;
+        return new ArrayList<>(base.customizers);
     }
 
     /**
@@ -103,8 +129,11 @@ public class TagSet {
         return null;
     }
 
-    /** Tag.valueOf with the normalName via the token.normalName, to save redundant lower-casing passes. */
-    Tag valueOf(String tagName, String normalName, String namespace, boolean preserveTagCase) {
+    /**
+     Tag.valueOf with the normalName via the token.normalName, to save redundant lower-casing passes.
+     Provide a null normalName unless we already have one; will be normalized if required from tagName.
+     */
+    Tag valueOf(String tagName, @Nullable String normalName, String namespace, boolean preserveTagCase) {
         Validate.notNull(tagName);
         Validate.notNull(namespace);
         tagName = tagName.trim();
@@ -113,6 +142,7 @@ public class TagSet {
         if (tag != null) return tag;
 
         // not found by tagName, try by normal
+        if (normalName == null) normalName = ParseSettings.normalName(tagName);
         tagName = preserveTagCase ? tagName : normalName;
         tag = get(normalName, namespace);
         if (tag != null) {
@@ -141,7 +171,7 @@ public class TagSet {
      @return The tag, either defined or new generic.
      */
     public Tag valueOf(String tagName, String namespace, ParseSettings settings) {
-        return valueOf(tagName, ParseSettings.normalName(tagName), namespace, settings.preserveTagCase());
+        return valueOf(tagName, null, namespace, settings.preserveTagCase());
     }
 
     /**
@@ -206,7 +236,7 @@ public class TagSet {
         String[] blockTags = {
             "html", "head", "body", "frameset", "script", "noscript", "style", "meta", "link", "title", "frame",
             "noframes", "section", "nav", "aside", "hgroup", "header", "footer", "p", "h1", "h2", "h3", "h4", "h5",
-            "h6", "br", "button",
+            "h6", "button",
             "ul", "ol", "pre", "div", "blockquote", "hr", "address", "figure", "figcaption", "form", "fieldset", "ins",
             "del", "dl", "dt", "dd", "li", "table", "caption", "thead", "tfoot", "tbody", "colgroup", "col", "tr", "th",
             "td", "video", "audio", "canvas", "details", "menu", "plaintext", "template", "article", "main",

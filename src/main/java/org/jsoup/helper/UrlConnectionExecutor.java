@@ -1,7 +1,6 @@
 package org.jsoup.helper;
 
 import org.jsoup.Connection;
-import org.jsoup.internal.Functions;
 import org.jspecify.annotations.Nullable;
 
 import javax.net.ssl.HttpsURLConnection;
@@ -91,12 +90,13 @@ class UrlConnectionExecutor extends RequestExecutor {
         conn.setReadTimeout(req.timeout() / 2); // gets reduced after connection is made and status is read
 
         if (conn instanceof HttpsURLConnection) {
-            HttpsURLConnection httpsConnection = (HttpsURLConnection) conn;
-
-            if (req.sslSocketFactory() != null)
-                httpsConnection.setSSLSocketFactory(req.sslSocketFactory());
+            HttpsURLConnection scon = (HttpsURLConnection) conn;
+            if (req.sslContext != null)
+                scon.setSSLSocketFactory(req.sslContext.getSocketFactory());
+            else if (req.sslSocketFactory() != null)
+                scon.setSSLSocketFactory(req.sslSocketFactory());
             if (req.hostnameVerifier() != null)
-                httpsConnection.setHostnameVerifier(req.hostnameVerifier());
+                scon.setHostnameVerifier(req.hostnameVerifier());
         }
         if (req.authenticator != null)
             AuthenticationHandler.handler.enable(req.authenticator, conn); // removed in finally
@@ -124,7 +124,7 @@ class UrlConnectionExecutor extends RequestExecutor {
             if (key == null || val == null)
                 continue; // skip http1.1 line
 
-            final List<String> vals = headers.computeIfAbsent(key, Functions.listFunction());
+            final List<String> vals = headers.computeIfAbsent(key, k -> new java.util.ArrayList<>());
             vals.add(val);
         }
         return headers;

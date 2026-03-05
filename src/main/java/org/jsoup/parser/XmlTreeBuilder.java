@@ -107,6 +107,11 @@ public class XmlTreeBuilder extends TreeBuilder {
     }
 
     @Override
+    int defaultMaxDepth() {
+        return Integer.MAX_VALUE;
+    }
+
+    @Override
     protected boolean process(Token token) {
         currentToken = token;
 
@@ -145,15 +150,18 @@ public class XmlTreeBuilder extends TreeBuilder {
 
         Attributes attributes = startTag.attributes;
         if (attributes != null) {
+            settings.normalizeAttributes(attributes);
             attributes.deduplicate(settings);
             processNamespaces(attributes, namespaces);
             applyNamespacesToAttributes(attributes, namespaces);
         }
 
+        enforceStackDepthLimit();
+
         String tagName = startTag.tagName.value();
         String ns = resolveNamespace(tagName, namespaces);
         Tag tag = tagFor(tagName, startTag.normalName, ns, settings);
-        Element el = new Element(tag, null, settings.normalizeAttributes(attributes));
+        Element el = new Element(tag, null, attributes);
         currentElement().appendChild(el);
         push(el);
 

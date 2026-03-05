@@ -9,7 +9,10 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class ParserTest {
 
@@ -28,6 +31,24 @@ public class ParserTest {
 
         String body = longBody.toString();
         assertEquals(body, Parser.unescapeEntities(body, false));
+    }
+
+    @Test public void unescapeTracksErrors() {
+        Parser parser = Parser.htmlParser();
+        parser.setTrackErrors(10);
+
+        String s = parser.unescape("One &bogus; &amp; &gt Two", false);
+        assertEquals("One &bogus; & > Two", s);
+        ParseErrorList errors = parser.getErrors();
+        assertEquals(2, errors.size());
+        assertEquals("<1:6>: Invalid character reference: invalid named reference [bogus]", errors.get(0).toString());
+        assertEquals("<1:22>: Invalid character reference: missing semicolon on [&gt]", errors.get(1).toString());
+
+        // can reuse parser; errors will be reset
+        s = parser.unescape("One &amp; &bogus; Two", false);
+        assertEquals("One & &bogus; Two", s);
+        assertEquals(1, parser.getErrors().size());
+        assertEquals("<1:12>: Invalid character reference: invalid named reference [bogus]", parser.getErrors().get(0).toString());
     }
 
     @Test
@@ -57,5 +78,25 @@ public class ParserTest {
         assertNotSame(xmlParser.getTreeBuilder(), xmlClone.getTreeBuilder());
         assertEquals(xmlParser.settings().preserveTagCase(), xmlClone.settings().preserveTagCase());
         assertEquals(xmlParser.settings().preserveAttributeCase(), xmlClone.settings().preserveAttributeCase());
+    }
+
+    @Test
+    public void testCloneCopyTagSet() {
+        Parser parser = Parser.htmlParser();
+        parser.tagSet().add(new Tag("foo"));
+        parser.tagSet().onNewTag(tag -> tag.set(Tag.SelfClose));
+        Parser clone = parser.clone();
+
+        // Ensure the tagsets are different instances
+        assertNotSame(clone.tagSet(), parser.tagSet());
+        // Check that cloned tagset contains same tag
+        assertNotNull(clone.tagSet().get("foo", Parser.NamespaceHtml));
+        // Ensure onNewTag customizers are retained
+        Tag custom = clone.tagSet().valueOf("qux", Parser.NamespaceHtml);
+        assertTrue(custom.isSelfClosing());
+        // Check that cloned tagset does not observe modifications made to the original
+        assertNull(clone.tagSet().get("bar", Parser.NamespaceHtml));
+        parser.tagSet().add(new Tag("bar"));
+        assertNull(clone.tagSet().get("bar", Parser.NamespaceHtml));
     }
 }
