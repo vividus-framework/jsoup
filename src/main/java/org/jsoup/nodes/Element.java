@@ -3,6 +3,7 @@ package org.jsoup.nodes;
 import org.jsoup.helper.Validate;
 import org.jsoup.internal.Normalizer;
 import org.jsoup.internal.QuietAppendable;
+import org.jsoup.helper.Regex;
 import org.jsoup.internal.StringUtil;
 import org.jsoup.parser.ParseSettings;
 import org.jsoup.parser.Parser;
@@ -50,7 +51,7 @@ public class Element extends Node implements Iterable<Element> {
     private static final List<Element> EmptyChildren = Collections.emptyList();
     private static final NodeList EmptyNodeList = new NodeList(0);
     private static final Pattern ClassSplit = Pattern.compile("\\s+");
-    private static final String BaseUriKey = Attributes.internalKey("baseUri");
+    static final String BaseUriKey = Attributes.internalKey("baseUri");
     Tag tag;
     NodeList childNodes;
     @Nullable Attributes attributes; // field is nullable but all methods for attributes are non-null
@@ -87,8 +88,7 @@ public class Element extends Node implements Iterable<Element> {
         childNodes = EmptyNodeList;
         this.attributes = attributes;
         this.tag = tag;
-        if (baseUri != null)
-            this.setBaseUri(baseUri);
+        if (!StringUtil.isBlank(baseUri)) this.setBaseUri(baseUri);
     }
 
     /**
@@ -130,17 +130,19 @@ public class Element extends Node implements Iterable<Element> {
 
     @Override
     public String baseUri() {
-        return searchUpForAttribute(this, BaseUriKey);
+        String baseUri = searchUpForAttribute(this, BaseUriKey);
+        return baseUri != null ? baseUri : "";
     }
 
-    private static String searchUpForAttribute(final Element start, final String key) {
+    @Nullable
+    static String searchUpForAttribute(final Element start, final String key) {
         Element el = start;
         while (el != null) {
             if (el.attributes != null && el.attributes.hasKey(key))
                 return el.attributes.get(key);
             el = el.parent();
         }
-        return "";
+        return null;
     }
 
     @Override
@@ -355,7 +357,18 @@ public class Element extends Node implements Iterable<Element> {
      * @see #childNode(int)
      */
     public Element child(int index) {
-        return childElementsList().get(index);
+        Validate.isTrue(index >= 0, "Index must be >= 0");
+        List<Element> cached = cachedChildren();
+        if (cached != null) return cached.get(index);
+        // otherwise, iter on elementChild; saves creating list
+        int size = childNodes.size();
+        for (int i = 0, e = 0; i < size; i++) { // direct iter is faster than chasing firstElSib, nextElSibd
+            Node node = childNodes.get(i);
+            if (node instanceof Element) {
+                if (e++ == index) return (Element) node;
+            }
+        }
+        throw new IndexOutOfBoundsException("No child at index: " + index);
     }
 
     /**
@@ -370,7 +383,8 @@ public class Element extends Node implements Iterable<Element> {
      * @see #child(int)
      */
     public int childrenSize() {
-        return childElementsList().size();
+        if (childNodeSize() == 0) return 0;
+        return childElementsList().size(); // gets children into cache; faster subsequent child(i) if unmodified
     }
 
     /**
@@ -406,8 +420,9 @@ public class Element extends Node implements Iterable<Element> {
     private static final String childElsMod = "jsoup.childElsMod";
 
     /** returns the cached child els, if they exist, and the modcount of our childnodes matches the stashed modcount */
-    private @Nullable List<Element> cachedChildren() {
-        Map<String, Object> userData = attributes().userData();
+    @Nullable List<Element> cachedChildren() {
+        if (attributes == null || !attributes.hasUserData()) return null; // don't create empty userdata
+        Map<String, Object> userData = attributes.userData();
         //noinspection unchecked
         WeakReference<List<Element>> ref = (WeakReference<List<Element>>) userData.get(childElsKey);
         if (ref != null) {
@@ -872,10 +887,7 @@ public class Element extends Node implements Iterable<Element> {
         int currentSize = childNodeSize();
         if (index < 0) index += currentSize +1; // roll around
         Validate.isTrue(index >= 0 && index <= currentSize, "Insert position out of bounds.");
-
-        ArrayList<Node> nodes = new ArrayList<>(children);
-        Node[] nodeArray = nodes.toArray(new Node[0]);
-        addChildren(index, nodeArray);
+        addChildren(index, children.toArray(new Node[0]));
         return this;
     }
 
@@ -1054,9 +1066,9 @@ public class Element extends Node implements Iterable<Element> {
     @Override
     public Element empty() {
         // Detach each of the children -> parent links:
-        for (Node child : childNodes) {
-            child.parentNode = null;
-        }
+        int size = childNodes.size();
+        for (int i = 0; i < size; i++)
+            childNodes.get(i).parentNode = null;
         childNodes.clear();
         return this;
     }
@@ -1236,10 +1248,10 @@ public class Element extends Node implements Iterable<Element> {
      @since 1.15.2
      */
     public @Nullable Element firstElementChild() {
-        Node child = firstChild();
-        while (child != null) {
-            if (child instanceof Element) return (Element) child;
-            child = child.nextSibling();
+        int size = childNodes.size();
+        for (int i = 0; i < size; i++) {
+            Node node = childNodes.get(i);
+            if (node instanceof Element) return (Element) node;
         }
         return null;
     }
@@ -1252,10 +1264,9 @@ public class Element extends Node implements Iterable<Element> {
      @since 1.15.2
      */
     public @Nullable Element lastElementChild() {
-        Node child = lastChild();
-        while (child != null) {
-            if (child instanceof Element) return (Element) child;
-            child = child.previousSibling();
+        for (int i = childNodes.size() - 1; i >= 0; i--) {
+            Node node = childNodes.get(i);
+            if (node instanceof Element) return (Element) node;
         }
         return null;
     }
@@ -1394,7 +1405,6 @@ public class Element extends Node implements Iterable<Element> {
      */
     public Elements getElementsByAttributeValueMatching(String key, Pattern pattern) {
         return Collector.collect(new Evaluator.AttributeWithValueMatching(key, pattern), this);
-
     }
 
     /**
@@ -1404,13 +1414,13 @@ public class Element extends Node implements Iterable<Element> {
      * @return elements that have attributes matching this regular expression
      */
     public Elements getElementsByAttributeValueMatching(String key, String regex) {
-        Pattern pattern;
+        Regex pattern;
         try {
-            pattern = Pattern.compile(regex);
+            pattern = Regex.compile(regex);
         } catch (PatternSyntaxException e) {
             throw new IllegalArgumentException("Pattern syntax error: " + regex, e);
         }
-        return getElementsByAttributeValueMatching(key, pattern);
+        return Collector.collect(new Evaluator.AttributeWithValueMatching(key, pattern), this);
     }
 
     /**
@@ -1479,13 +1489,13 @@ public class Element extends Node implements Iterable<Element> {
      * @see Element#text()
      */
     public Elements getElementsMatchingText(String regex) {
-        Pattern pattern;
+        Regex pattern;
         try {
-            pattern = Pattern.compile(regex);
+            pattern = Regex.compile(regex);
         } catch (PatternSyntaxException e) {
             throw new IllegalArgumentException("Pattern syntax error: " + regex, e);
         }
-        return getElementsMatchingText(pattern);
+        return Collector.collect(new Evaluator.Matches(pattern), this);
     }
 
     /**
@@ -1505,13 +1515,13 @@ public class Element extends Node implements Iterable<Element> {
      * @see Element#ownText()
      */
     public Elements getElementsMatchingOwnText(String regex) {
-        Pattern pattern;
+        Regex pattern;
         try {
-            pattern = Pattern.compile(regex);
+            pattern = Regex.compile(regex);
         } catch (PatternSyntaxException e) {
             throw new IllegalArgumentException("Pattern syntax error: " + regex, e);
         }
-        return getElementsMatchingOwnText(pattern);
+        return Collector.collect(new Evaluator.MatchesOwn(pattern), this);
     }
 
     /**
@@ -2066,12 +2076,36 @@ public class Element extends Node implements Iterable<Element> {
     }
 
     static final class NodeList extends ArrayList<Node> {
+        /** Tracks if the children have valid sibling indices. We only need to reindex on siblingIndex() demand. */
+        boolean validChildren = true;
+
         public NodeList(int size) {
             super(size);
         }
 
+        /** The modCount is used to invalidate the cached element children. */
         int modCount() {
             return this.modCount;
         }
+
+        void incrementMod() {
+            this.modCount++;
+        }
+    }
+
+    void reindexChildren() {
+        final int size = childNodes.size();
+        for (int i = 0; i < size; i++) {
+            childNodes.get(i).setSiblingIndex(i);
+        }
+        childNodes.validChildren = true;
+    }
+
+    void invalidateChildren() {
+        childNodes.validChildren = false;
+    }
+
+    boolean hasValidChildren() {
+        return childNodes.validChildren;
     }
 }

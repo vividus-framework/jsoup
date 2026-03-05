@@ -26,6 +26,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static org.jsoup.nodes.NodeIteratorTest.assertIterates;
@@ -2844,7 +2845,7 @@ public class ElementTest {
         Document doc = Jsoup.parse(reference);
         Throwable ex = assertThrows(IllegalArgumentException.class,
             () -> doc.getElementsByAttributeValueMatching("key", "\\x"));
-        assertEquals("Pattern syntax error: \\x", ex.getMessage());
+        assertTrue(ex.getMessage().contains("Pattern syntax error"));
     }
 
     @Test void getElementsByIndexEquals() {
@@ -2874,7 +2875,7 @@ public class ElementTest {
         Document doc = Jsoup.parse(reference);
         Throwable ex = assertThrows(IllegalArgumentException.class,
             () -> doc.getElementsMatchingText("\\x"));
-        assertEquals("Pattern syntax error: \\x", ex.getMessage());
+        assertTrue(ex.getMessage().contains("Pattern syntax error:"));
     }
 
     @Test void getElementsMatchingText() {
@@ -2896,7 +2897,7 @@ public class ElementTest {
         Document doc = Jsoup.parse(reference);
         Throwable ex = assertThrows(IllegalArgumentException.class,
             () -> doc.getElementsMatchingOwnText("\\x"));
-        assertEquals("Pattern syntax error: \\x", ex.getMessage());
+        assertTrue(ex.getMessage().contains("Pattern syntax error:"));
     }
 
     @Test void hasText() {
@@ -3246,5 +3247,80 @@ public class ElementTest {
             assertEquals("No nodes matched the query '::comment' in the document.", e.getMessage());
         }
         assertTrue(threw);
+    }
+
+    @Test void childByIndex() {
+        // uncached, cached paths
+        Element el = Jsoup.parse("<div>One <p>Two</p> Three <p>Four</p> Five <p>Six</p>").expectFirst("div");
+
+        // uncached
+        Element p0 = el.child(0);
+        Element p1 = el.child(1);
+        Element p2 = el.child(2);
+        assertNull(el.cachedChildren());
+
+        assertEquals("Two", p0.text());
+        assertEquals("Four", p1.text());
+        assertEquals("Six", p2.text());
+
+        // cached
+        Elements children = el.children();
+        assertNotNull(el.cachedChildren());
+        assertSame(p0, el.child(0));
+        assertSame(p1, el.child(1));
+        assertSame(p2, el.child(2));
+    }
+
+    @Test public void testChildThrowsIndexOutOfBoundsWhenCachedChildrenIsNull() {
+        Element el = Jsoup.parse("<div><p>One</p></div>").expectFirst("div");
+        assertNull(el.cachedChildren());
+        Exception exception = assertThrows(IndexOutOfBoundsException.class, () -> {
+            el.child(5);
+        });
+        assertTrue(exception.getMessage().contains("No child at index: 5"));
+    }
+
+    @Test public void testChildrenSizeUncachedAndCached() {
+        Element el = Jsoup.parse("<div>One <p>Two</p> Three <p>Four</p> Five <p>Six</p>").expectFirst("div");
+
+        // uncached
+        assertNull(el.cachedChildren());
+        assertEquals(3, el.childrenSize());
+        // gets cached. As we have to iter elements anyway, might as well make and cache the list, so later child(i) is fast. supports for(i=0;i<el.childrenSize()){child=el.child(i)} case. (But better just to for el.children() ).
+        assertNotNull(el.cachedChildren());
+
+        el = Jsoup.parse("<div>One <p>Two</p> Three <p>Four</p> Five <p>Six</p> <b></b>").expectFirst("div"); // resest
+        assertNull(el.cachedChildren());
+        el.children();
+        assertNotNull(el.cachedChildren());
+        assertEquals(4, el.childrenSize());
+
+        Element empty = el.expectFirst("b");
+        assertEquals(0, empty.childrenSize());
+        assertNull(empty.cachedChildren()); // 0 node fast path, does not create list
+    }
+
+    @Test public void testReplaceInvalidates() {
+        // https://github.com/jhy/jsoup/issues/2391
+        String html = "<div>test</div>";
+        Document doc = Jsoup.parseBodyFragment(html);
+        Element div = doc.expectFirst("div");
+
+        // Cached
+        Elements divChildren = div.children(); // 0 child elements, 1 node
+        int origCount = divChildren.size();
+
+        // Modify child
+        TextNode text = (TextNode) div.childNode(0);
+        Element p = doc.createElement("p");
+        text.replaceWith(p);
+        p.appendChild(text);
+
+        int reported = div.childrenSize(); // invalidated ^^
+        long actualSize = div.childNodes().stream().filter(node -> node instanceof Element).count();
+
+        assertEquals(0, origCount);
+        assertEquals(1, actualSize);
+        assertEquals(1, reported); // was 0 via cache
     }
 }

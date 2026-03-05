@@ -286,15 +286,12 @@ enum HtmlTreeBuilderState {
             switch (t.type) {
                 case Character: {
                     Token.Character c = t.asCharacter();
-                    if (c.getData().equals(nullString)) {
-                        tb.error(this);
-                        return false;
-                    } else if (tb.framesetOk() && isWhitespace(c)) { // don't check if whitespace if frames already closed
+                    if (tb.framesetOk() && isWhitespace(c)) { // don't check if whitespace if frames already closed
                         tb.reconstructFormattingElements();
                         tb.insertCharacterNode(c);
                     } else {
                         tb.reconstructFormattingElements();
-                        tb.insertCharacterNode(c);
+                        tb.insertCharacterNode(c); // strips nulls
                         tb.framesetOk(false);
                     }
                     break;
@@ -382,7 +379,7 @@ enum HtmlTreeBuilderState {
                 case "body":
                     tb.error(this);
                     stack = tb.getStack();
-                    if (stack.size() == 1 || (stack.size() > 2 && !stack.get(1).nameIs("body")) || tb.onStack("template")) {
+                    if (stack.size() < 2 || (stack.size() > 2 && !stack.get(1).nameIs("body")) || tb.onStack("template")) {
                         // only in fragment case
                         return false; // ignore
                     } else {
@@ -395,7 +392,7 @@ enum HtmlTreeBuilderState {
                 case "frameset":
                     tb.error(this);
                     stack = tb.getStack();
-                    if (stack.size() == 1 || (stack.size() > 2 && !stack.get(1).nameIs("body"))) {
+                    if (stack.size() < 2|| (stack.size() > 2 && !stack.get(1).nameIs("body"))) {
                         // only in fragment case
                         return false; // ignore
                     } else if (!tb.framesetOk()) {
@@ -924,7 +921,7 @@ enum HtmlTreeBuilderState {
                     } else {
                         el = tb.aboveOnStack(el);
                     }
-                    if (el == null) {
+                    if (el == null || el.nameIs("body")) {
                         tb.error(this); // shouldn't be able to hit
                         break;
                     }
@@ -945,6 +942,11 @@ enum HtmlTreeBuilderState {
                     }
 
                     //  6. [Create an element for the token] for which the element node was created, in the [HTML namespace], with commonAncestor as the intended parent; replace the entry for node in the [list of active formatting elements] with an entry for the new element, replace the entry for node in the [stack of open elements] with an entry for the new element, and let node be the new element.
+                    if (!tb.onStack(el)) { // stale formatting element; cannot adopt/replace
+                        tb.error(this);
+                        tb.removeFromActiveFormattingElements(el);
+                        break; // exit inner loop; proceed with step 14 using current lastEl
+                    }
                     Element replacement = new Element(tb.tagFor(el.nodeName(), el.normalName(), tb.defaultNamespace(), ParseSettings.preserveCase), tb.getBaseUri());
                     tb.replaceActiveFormattingElement(el, replacement);
                     tb.replaceOnStack(el, replacement);
@@ -1110,13 +1112,7 @@ enum HtmlTreeBuilderState {
     InTableText {
         @Override boolean process(Token t, HtmlTreeBuilder tb) {
             if (t.type == Token.TokenType.Character) {
-                Token.Character c = t.asCharacter();
-                if (c.getData().equals(nullString)) {
-                    tb.error(this);
-                    return false;
-                } else {
-                    tb.addPendingTableCharacters(c);
-                }
+                tb.addPendingTableCharacters(t.asCharacter()); // gets to insertCharacterNode, which strips nulls
             } else {
                 // insert gathered table text into the correct element:
                 if (tb.getPendingTableCharacters().size() > 0) {
@@ -1449,13 +1445,7 @@ enum HtmlTreeBuilderState {
 
             switch (t.type) {
                 case Character:
-                    Token.Character c = t.asCharacter();
-                    if (c.getData().equals(nullString)) {
-                        tb.error(this);
-                        return false;
-                    } else {
-                        tb.insertCharacterNode(c);
-                    }
+                    tb.insertCharacterNode(t.asCharacter());
                     break;
                 case Comment:
                     tb.insertCommentNode(t.asComment());
@@ -1485,7 +1475,11 @@ enum HtmlTreeBuilderState {
                         tb.error(this);
                         if (!tb.inSelectScope("select"))
                             return false; // frag
-                        tb.processEndTag("select");
+                        // spec says close select then reprocess; leads to recursion. iter directly:
+                        do {
+                            tb.popStackToClose("select");
+                            tb.resetInsertionMode();
+                        } while (tb.inSelectScope("select")); // collapse invalid nested selects
                         return tb.process(start);
                     } else if (name.equals("script") || name.equals("template")) {
                         return tb.process(t, InHead);
@@ -1693,7 +1687,7 @@ enum HtmlTreeBuilderState {
                         return false;
                 }
             } else if (t.isEndTag() && t.asEndTag().normalName().equals("frameset")) {
-                if (tb.currentElementIs("html")) { // frag
+                if (!tb.currentElementIs("frameset")) { // spec checks if el is html; deviate to confirm we are about to pop the frameset el
                     tb.error(this);
                     return false;
                 } else {
@@ -1781,12 +1775,10 @@ enum HtmlTreeBuilderState {
             switch (t.type) {
                 case Character:
                     Token.Character c = t.asCharacter();
-                    if (c.getData().equals(nullString))
-                        tb.error(this);
-                    else if (HtmlTreeBuilderState.isWhitespace(c))
+                    if (HtmlTreeBuilderState.isWhitespace(c))
                         tb.insertCharacterNode(c);
                     else {
-                        tb.insertCharacterNode(c);
+                        tb.insertCharacterNode(c, true); // replace nulls
                         tb.framesetOk(false);
                     }
                     break;
@@ -1820,8 +1812,6 @@ enum HtmlTreeBuilderState {
                             tb.tokeniser.transition(TokeniserState.ScriptData);
                         else
                             tb.tokeniser.transition(textState);
-                        tb.markInsertionMode();
-                        tb.transition(Text);
                     }
 
                     break;

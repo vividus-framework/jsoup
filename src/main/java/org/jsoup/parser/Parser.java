@@ -30,6 +30,7 @@ public class Parser implements Cloneable {
     private boolean trackPosition = false;
     private @Nullable TagSet tagSet;
     private final ReentrantLock lock = new ReentrantLock();
+    private int maxDepth;
 
     /**
      * Create a new Parser, using the specified TreeBuilder
@@ -39,6 +40,7 @@ public class Parser implements Cloneable {
         this.treeBuilder = treeBuilder;
         settings = treeBuilder.defaultSettings();
         errors = ParseErrorList.noTracking();
+        maxDepth = treeBuilder.defaultMaxDepth();
     }
 
     /**
@@ -60,6 +62,8 @@ public class Parser implements Cloneable {
         errors = new ParseErrorList(copy.errors); // only copies size, not contents
         settings = new ParseSettings(copy.settings);
         trackPosition = copy.trackPosition;
+        maxDepth = copy.maxDepth;
+        tagSet = new TagSet(copy.tagSet());
     }
 
     /**
@@ -195,6 +199,28 @@ public class Parser implements Cloneable {
     }
 
     /**
+     Set the parser's maximum stack depth (maximum number of open elements). When reached, new open elements will be
+     removed to prevent excessive nesting. Defaults to 512 for the HTML parser, and unlimited for the XML
+     parser.
+
+     @param maxDepth maximum parser depth; must be >= 1
+     @return this Parser, for chaining
+     */
+    public Parser setMaxDepth(int maxDepth) {
+        Validate.isTrue(maxDepth >= 1, "maxDepth must be >= 1");
+        this.maxDepth = maxDepth;
+        return this;
+    }
+
+    /**
+     * Get the maximum parser depth (maximum number of open elements).
+     * @return the current max parser depth
+     */
+    public int getMaxDepth() {
+        return maxDepth;
+    }
+
+    /**
      Set a custom TagSet to use for this Parser. This allows you to define your own tags, and control how they are
      parsed. For example, you can set a tag to preserve whitespace, or to be treated as a block tag.
      <p>You can start with the {@link TagSet#Html()} defaults and customize, or a new empty TagSet.</p>
@@ -295,26 +321,41 @@ public class Parser implements Cloneable {
         Document doc = Document.createShell(baseUri);
         Element body = doc.body();
         List<Node> nodeList = parseFragment(bodyHtml, body, baseUri);
-        Node[] nodes = nodeList.toArray(new Node[0]); // the node list gets modified when re-parented
-        for (int i = nodes.length - 1; i > 0; i--) {
-            nodes[i].remove();
-        }
-        for (Node node : nodes) {
-            body.appendChild(node);
-        }
+        body.appendChildren(nodeList);
         return doc;
     }
 
     /**
-     * Utility method to unescape HTML entities from a string
-     * @param string HTML escaped string
-     * @param inAttribute if the string is to be escaped in strict mode (as attributes are)
-     * @return an unescaped string
+     Utility method to unescape HTML entities from a string.
+     <p>To track errors while unescaping, use
+     {@link #unescape(String, boolean)} with a Parser instance that has error tracking enabled.</p>
+
+     @param string HTML escaped string
+     @param inAttribute if the string is to be escaped in strict mode (as attributes are)
+     @return an unescaped string
+     @see #unescape(String, boolean)
      */
     public static String unescapeEntities(String string, boolean inAttribute) {
-        Parser parser = Parser.htmlParser();
-        parser.treeBuilder.initialiseParse(new StringReader(string), "", parser);
-        Tokeniser tokeniser = new Tokeniser(parser.treeBuilder);
+        Validate.notNull(string);
+        if (string.indexOf('&') < 0) return string; // nothing to unescape
+        return Parser.htmlParser().unescape(string, inAttribute);
+    }
+
+    /**
+     Utility method to unescape HTML entities from a string, using this {@code Parser}'s configuration (for example, to
+     collect errors while unescaping).
+
+     @param string HTML escaped string
+     @param inAttribute if the string is to be escaped in strict mode (as attributes are)
+     @return an unescaped string
+     @see #setTrackErrors(int)
+     @see #unescapeEntities(String, boolean)
+     */
+    public String unescape(String string, boolean inAttribute) {
+        Validate.notNull(string);
+        if (string.indexOf('&') < 0) return string; // nothing to unescape
+        this.treeBuilder.initialiseParse(new StringReader(string), "", this);
+        Tokeniser tokeniser = new Tokeniser(this.treeBuilder);
         return tokeniser.unescapeEntities(inAttribute);
     }
 
@@ -335,6 +376,6 @@ public class Parser implements Cloneable {
      * @return a new simple XML parser.
      */
     public static Parser xmlParser() {
-        return new Parser(new XmlTreeBuilder());
+        return new Parser(new XmlTreeBuilder()).setMaxDepth(Integer.MAX_VALUE);
     }
 }

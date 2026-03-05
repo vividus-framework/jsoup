@@ -200,7 +200,7 @@ public class Tag implements Cloneable {
      * @return The tag, either defined or new generic.
      */
     public static Tag valueOf(String tagName, String namespace, ParseSettings settings) {
-        return TagSet.Html().valueOf(tagName, ParseSettings.normalName(tagName), namespace, settings.preserveTagCase());
+        return TagSet.Html().valueOf(tagName, null, namespace, settings.preserveTagCase());
     }
 
     /**
@@ -245,7 +245,7 @@ public class Tag implements Cloneable {
      Get if this is an InlineContainer tag.
 
      @return true if an InlineContainer (which formats children as inline).
-     @deprecated setting is only used within the Printer. Will be removed in a future release.
+     @deprecated internal pretty-printing flag; use {@link #isInline()} or {@link #isBlock()} to check layout intent. Will be removed in jsoup 1.24.1.
      */
     @Deprecated public boolean formatAsBlock() {
         return (options & InlineContainer) != 0;

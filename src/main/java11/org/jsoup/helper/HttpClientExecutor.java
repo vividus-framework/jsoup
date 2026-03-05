@@ -31,7 +31,7 @@ class HttpClientExecutor extends RequestExecutor {
     // HttpClient expects proxy settings per client; we do per request, so held as a thread local. Can't do same for
     // auth because that callback is on a worker thread, so can only do auth per Connection. So we create a new client
     // if the authenticator is different between requests
-    static ThreadLocal<Proxy> perRequestProxy = new ThreadLocal<>();
+    static ThreadLocal<@Nullable Proxy> perRequestProxy = new ThreadLocal<>();
 
     @Nullable
     HttpResponse<InputStream> hRes;
@@ -45,17 +45,25 @@ class HttpClientExecutor extends RequestExecutor {
      same Connection (session).
      */
     HttpClient client() {
-        // we try to reuse the same Client across requests in a given Connection; but if the request auth has changed, we need to create a new client
-        RequestAuthenticator prevAuth = req.connection.lastAuth;
-        req.connection.lastAuth = req.authenticator;
-        if (req.connection.client != null && prevAuth == req.authenticator) { // might both be null
-            return (HttpClient) req.connection.client;
+        // we try to reuse the same Client across requests in a given Connection; but if the request's auth or ssl context have changed, we need to create a new client
+        if (req.connection.client != null) {
+            HttpClient client = (HttpClient) req.connection.client;
+            boolean reuse = true;
+
+            RequestAuthenticator prevAuth = req.connection.lastAuth;
+            req.connection.lastAuth = req.authenticator;
+            if (prevAuth != req.authenticator) // might both be null
+                reuse = false;
+            if (req.sslContext != null && !(client.sslContext() == req.sslContext)) // client returns default context if not otherwise set
+                reuse = false;
+            if (reuse) return client;
         }
 
         HttpClient.Builder builder = HttpClient.newBuilder();
         builder.followRedirects(HttpClient.Redirect.NEVER); // customized redirects
         builder.proxy(new ProxyWrap()); // thread local impl for per request; called on executing thread
         if (req.authenticator != null) builder.authenticator(new AuthenticationHandler(req.authenticator));
+        if (req.sslContext    != null) builder.sslContext(req.sslContext);
 
         HttpClient client = builder.build();
         req.connection.client = client;
@@ -155,12 +163,25 @@ class HttpClientExecutor extends RequestExecutor {
         @Override
         public List<Proxy> select(URI uri) {
             Proxy proxy = perRequestProxy.get();
-            return proxy != null ? Collections.singletonList(proxy) : NoProxy;
+            if (proxy != null) {
+                return Collections.singletonList(proxy);
+            }
+            ProxySelector defaultSelector = ProxySelector.getDefault();
+            if (defaultSelector != null && defaultSelector != this) { // avoid recursion if we were set as default
+                return defaultSelector.select(uri);
+            }
+            return NoProxy;
         }
 
         @Override
         public void connectFailed(URI uri, SocketAddress sa, IOException ioe) {
-            // no-op
+            if (perRequestProxy.get() != null) {
+                return;  // no-op
+            }
+            ProxySelector defaultSelector = ProxySelector.getDefault();
+            if (defaultSelector != null && defaultSelector != this) {
+                defaultSelector.connectFailed(uri, sa, ioe);
+            }
         }
     }
 }
